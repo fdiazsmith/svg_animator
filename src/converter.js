@@ -39,12 +39,14 @@ export function convertSingleImage(imagePath, options = {}) {
   return new Promise((resolve, reject) => {
     const trace = new potrace.Potrace();
 
+    // blackOnWhite: true = trace dark shapes on light background (default)
+    // blackOnWhite: false = trace light shapes on dark background (use --invert)
     trace.setParameters({
-      turdSize: options.turdSize ?? 2,       // Ignore small features
+      turdSize: options.turdSize ?? 2,
       optCurve: true,
-      optTolerance: options.tolerance ?? 1,  // Higher = simpler curves, smaller files
-      threshold: options.threshold ?? 250,
-      blackOnWhite: false
+      optTolerance: options.tolerance ?? 1,
+      threshold: options.threshold ?? 128,
+      blackOnWhite: !options.invert   // --invert flips to trace light on dark
     });
 
     trace.loadImage(imagePath, (err) => {
@@ -68,6 +70,10 @@ export function convertSingleImage(imagePath, options = {}) {
       // Filter out background rectangle paths (paths that span the entire canvas)
       const filteredPath = filterBackgroundPaths(pathMatch[1], w, h);
 
+      if (!filteredPath || filteredPath.trim() === '') {
+        return reject(new Error(`No valid path data after filtering in ${imagePath}`));
+      }
+
       // Optimize path: reduce decimal precision
       const optimizedPath = optimizePath(filteredPath, options.precision ?? 0);
 
@@ -82,6 +88,7 @@ export function convertSingleImage(imagePath, options = {}) {
 
 /**
  * Filter out background/artifact paths
+ * Only removes paths that are clearly full-canvas rectangles or tiny edge artifacts
  * @param {string} pathData
  * @param {number} width
  * @param {number} height
@@ -97,11 +104,12 @@ function filterBackgroundPaths(pathData, width, height) {
   }
 
   if (subPaths.length === 0) return pathData;
+  if (subPaths.length === 1) return pathData; // Single path, keep it
 
   // Calculate bounds for each subpath
   const pathsWithBounds = subPaths.map(subPath => {
     const nums = subPath.match(/-?\d+\.?\d*/g);
-    if (!nums || nums.length < 4) return { path: subPath, area: 0, isEdge: false };
+    if (!nums || nums.length < 4) return { path: subPath, pathWidth: 0, pathHeight: 0, minX: 0, minY: 0 };
 
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
@@ -117,27 +125,30 @@ function filterBackgroundPaths(pathData, width, height) {
       }
     }
 
-    const pathWidth = maxX - minX;
-    const pathHeight = maxY - minY;
-    const area = pathWidth * pathHeight;
-
-    // Check if path touches canvas edges (likely background artifact)
-    const isEdge = minX < 2 || minY < 2 || maxX > width - 2 || maxY > height - 2;
-
-    return { path: subPath, area, isEdge, pathWidth, pathHeight };
+    return {
+      path: subPath,
+      pathWidth: maxX - minX,
+      pathHeight: maxY - minY,
+      minX, minY, maxX, maxY
+    };
   });
 
-  // Filter: remove edge-touching paths that span large areas
+  // Only filter out very specific cases:
+  // 1. Full-canvas rectangles (>98% of canvas)
+  // 2. Tiny edge artifacts (<3px in any dimension, touching edge)
   const filtered = pathsWithBounds.filter(p => {
-    // Remove paths that touch edges AND are very thin or span full dimension
-    if (p.isEdge) {
-      // Thin edge artifacts (like the 0.498 path)
-      if (p.pathWidth < 5 || p.pathHeight < 5) return false;
-      // Full-canvas spanning
-      if (p.pathWidth > width * 0.9 && p.pathHeight > height * 0.9) return false;
-    }
+    // Full canvas background rectangle
+    if (p.pathWidth > width * 0.98 && p.pathHeight > height * 0.98) return false;
+
+    // Tiny edge artifacts
+    const touchesEdge = p.minX < 1 || p.minY < 1 || p.maxX > width - 1 || p.maxY > height - 1;
+    if (touchesEdge && (p.pathWidth < 3 || p.pathHeight < 3)) return false;
+
     return true;
   });
+
+  // If all filtered out, return original (don't lose data)
+  if (filtered.length === 0) return pathData;
 
   return filtered.map(p => p.path).join(' ');
 }

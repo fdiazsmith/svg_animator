@@ -1,11 +1,53 @@
 import { glob } from 'glob';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
+import os from 'os';
 import { convertImages } from './converter.js';
 import { normalizePaths } from './normalizer.js';
 import { interpolateFrames } from './interpolator.js';
 import { generatePlayer } from './player-generator.js';
 import { generateSMIL } from './smil-generator.js';
+
+const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+
+/**
+ * Check if input is a video file
+ */
+function isVideoFile(input) {
+  const ext = path.extname(input).toLowerCase();
+  return VIDEO_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Extract frames from video using ffmpeg
+ * @returns {Promise<{frames: string[], tempDir: string}>}
+ */
+async function extractVideoFrames(videoPath, fps) {
+  const tempDir = path.join(os.tmpdir(), `svg-animator-${Date.now()}`);
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  const outputPattern = path.join(tempDir, 'frame_%05d.png');
+  const fpsFilter = fps ? `-vf fps=${fps}` : '';
+
+  console.log(`Extracting frames from video...`);
+
+  try {
+    execSync(`ffmpeg -i "${videoPath}" ${fpsFilter} "${outputPattern}" -y 2>/dev/null`, {
+      stdio: 'pipe'
+    });
+  } catch (err) {
+    throw new Error('ffmpeg failed. Make sure ffmpeg is installed.');
+  }
+
+  const frames = fs.readdirSync(tempDir)
+    .filter(f => f.endsWith('.png'))
+    .sort()
+    .map(f => path.join(tempDir, f));
+
+  console.log(`Extracted ${frames.length} frames`);
+  return { frames, tempDir };
+}
 
 /**
  * Main animation pipeline
@@ -14,12 +56,21 @@ import { generateSMIL } from './smil-generator.js';
 export async function animate(options) {
   console.log('SVG Animator\n');
 
-  // 1. Resolve input files (sorted)
-  const inputFiles = await glob(options.input);
-  inputFiles.sort();
+  let inputFiles;
+  let tempDir = null;
+
+  // 1. Handle video or image sequence input
+  if (isVideoFile(options.input)) {
+    const result = await extractVideoFrames(options.input, options.videoFps);
+    inputFiles = result.frames;
+    tempDir = result.tempDir;
+  } else {
+    inputFiles = await glob(options.input);
+    inputFiles.sort();
+  }
 
   if (inputFiles.length < 2) {
-    throw new Error(`Need at least 2 input images, found ${inputFiles.length}`);
+    throw new Error(`Need at least 2 input frames, found ${inputFiles.length}`);
   }
   console.log(`Found ${inputFiles.length} input frames`);
 
@@ -74,6 +125,11 @@ export async function animate(options) {
   if (!options.playerOnly) {
     generateSMIL(allFrames, config);
     console.log(`SMIL SVG: ${config.output}.svg`);
+  }
+
+  // Cleanup temp directory if video input
+  if (tempDir) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 
   console.log('\nDone!');
