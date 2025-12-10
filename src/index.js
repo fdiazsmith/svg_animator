@@ -69,10 +69,17 @@ export async function animate(options) {
     inputFiles.sort();
   }
 
+  // Apply frame skip if specified
+  const skip = options.skip || 1;
+  if (skip > 1) {
+    inputFiles = inputFiles.filter((_, i) => i % skip === 0);
+    console.log(`Skipping frames (keep every ${skip}): ${inputFiles.length} frames`);
+  }
+
   if (inputFiles.length < 2) {
     throw new Error(`Need at least 2 input frames, found ${inputFiles.length}`);
   }
-  console.log(`Found ${inputFiles.length} input frames`);
+  console.log(`Processing ${inputFiles.length} frames`);
 
   // 2. Convert to SVG paths
   const { paths: rawPaths, width, height } = await convertImages(inputFiles, {

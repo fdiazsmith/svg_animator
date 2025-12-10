@@ -21,6 +21,7 @@ program
   .option('--tolerance <number>', 'Curve tolerance (higher=simpler, 0.2-2)', '1')
   .option('--video-fps <number>', 'Extract frames at this fps from video input')
   .option('--invert', 'Invert tracing (trace light shapes on dark bg)', false)
+  .option('--skip <number>', 'Keep every Nth frame (e.g., 2 = half the frames)', '1')
   .parse();
 
 const opts = program.opts();
@@ -32,6 +33,7 @@ if (opts.height) opts.height = parseInt(opts.height);
 if (opts.precision) opts.precision = parseInt(opts.precision);
 if (opts.tolerance) opts.tolerance = parseFloat(opts.tolerance);
 if (opts.videoFps) opts.videoFps = parseInt(opts.videoFps);
+if (opts.skip) opts.skip = parseInt(opts.skip);
 
 animate(opts).catch(err => {
   console.error('Error:', err.message);
