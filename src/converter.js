@@ -40,11 +40,11 @@ export function convertSingleImage(imagePath, options = {}) {
     const trace = new potrace.Potrace();
 
     trace.setParameters({
-      turdSize: 2,
+      turdSize: options.turdSize ?? 2,       // Ignore small features
       optCurve: true,
-      optTolerance: 0.2,
-      threshold: options.threshold ?? 250,  // High threshold to catch light gray
-      blackOnWhite: false  // Trace light shapes on dark/transparent background
+      optTolerance: options.tolerance ?? 1,  // Higher = simpler curves, smaller files
+      threshold: options.threshold ?? 250,
+      blackOnWhite: false
     });
 
     trace.loadImage(imagePath, (err) => {
@@ -68,8 +68,11 @@ export function convertSingleImage(imagePath, options = {}) {
       // Filter out background rectangle paths (paths that span the entire canvas)
       const filteredPath = filterBackgroundPaths(pathMatch[1], w, h);
 
+      // Optimize path: reduce decimal precision
+      const optimizedPath = optimizePath(filteredPath, options.precision ?? 0);
+
       resolve({
-        path: filteredPath,
+        path: optimizedPath,
         width: w,
         height: h
       });
@@ -137,4 +140,20 @@ function filterBackgroundPaths(pathData, width, height) {
   });
 
   return filtered.map(p => p.path).join(' ');
+}
+
+/**
+ * Optimize path by reducing decimal precision
+ * @param {string} pathData
+ * @param {number} precision - decimal places (0 = integers)
+ * @returns {string}
+ */
+function optimizePath(pathData, precision = 0) {
+  // Round numbers to reduce file size
+  return pathData.replace(/-?\d+\.?\d*/g, (match) => {
+    const num = parseFloat(match);
+    if (isNaN(num)) return match;
+    if (precision === 0) return Math.round(num).toString();
+    return num.toFixed(precision);
+  });
 }
