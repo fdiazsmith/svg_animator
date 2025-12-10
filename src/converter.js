@@ -37,51 +37,73 @@ export async function convertImages(imagePaths, options = {}) {
  */
 export function convertSingleImage(imagePath, options = {}) {
   return new Promise((resolve, reject) => {
-    const trace = new potrace.Potrace();
+    const threshold = options.threshold ?? 128;
+    const invert = options.invert ?? false;
 
-    // blackOnWhite: true = trace dark shapes on light background (default)
-    // blackOnWhite: false = trace light shapes on dark background (use --invert)
-    trace.setParameters({
-      turdSize: options.turdSize ?? 2,
-      optCurve: true,
-      optTolerance: options.tolerance ?? 1,
-      threshold: options.threshold ?? 128,
-      blackOnWhite: !options.invert   // --invert flips to trace light on dark
+    attemptTrace(imagePath, threshold, invert, options, (err, result) => {
+      if (err) {
+        // If empty path with default threshold, retry with higher threshold
+        // (helps with transparent PNGs where shapes are light)
+        if (err.message.includes('No path data') && threshold < 200) {
+          attemptTrace(imagePath, 250, invert, options, (err2, result2) => {
+            if (err2) return reject(err);
+            resolve(result2);
+          });
+        } else {
+          return reject(err);
+        }
+      } else {
+        resolve(result);
+      }
     });
+  });
+}
 
-    trace.loadImage(imagePath, (err) => {
-      if (err) return reject(new Error(`Failed to load ${imagePath}: ${err.message}`));
+function attemptTrace(imagePath, threshold, invert, options, callback) {
+  const trace = new potrace.Potrace();
 
-      const svg = trace.getSVG();
-      const pathTag = trace.getPathTag();
+  // blackOnWhite: true = trace dark shapes on light background (default)
+  // blackOnWhite: false = trace light shapes on dark background (use --invert)
+  trace.setParameters({
+    turdSize: options.turdSize ?? 2,
+    optCurve: true,
+    optTolerance: options.tolerance ?? 1,
+    threshold: threshold,
+    blackOnWhite: !invert
+  });
 
-      // Extract path d attribute
-      const pathMatch = pathTag.match(/d="([^"]+)"/);
-      if (!pathMatch) {
-        return reject(new Error(`No path data found in ${imagePath}`));
-      }
+  trace.loadImage(imagePath, (err) => {
+    if (err) return callback(new Error(`Failed to load ${imagePath}: ${err.message}`));
 
-      // Extract dimensions from SVG
-      const widthMatch = svg.match(/width="(\d+)"/);
-      const heightMatch = svg.match(/height="(\d+)"/);
-      const w = widthMatch ? parseInt(widthMatch[1]) : 512;
-      const h = heightMatch ? parseInt(heightMatch[1]) : 512;
+    const svg = trace.getSVG();
+    const pathTag = trace.getPathTag();
 
-      // Filter out background rectangle paths (paths that span the entire canvas)
-      const filteredPath = filterBackgroundPaths(pathMatch[1], w, h);
+    // Extract path d attribute
+    const pathMatch = pathTag.match(/d="([^"]+)"/);
+    if (!pathMatch || !pathMatch[1] || pathMatch[1].trim() === '') {
+      return callback(new Error(`No path data found in ${imagePath}`));
+    }
 
-      if (!filteredPath || filteredPath.trim() === '') {
-        return reject(new Error(`No valid path data after filtering in ${imagePath}`));
-      }
+    // Extract dimensions from SVG
+    const widthMatch = svg.match(/width="(\d+)"/);
+    const heightMatch = svg.match(/height="(\d+)"/);
+    const w = widthMatch ? parseInt(widthMatch[1]) : 512;
+    const h = heightMatch ? parseInt(heightMatch[1]) : 512;
 
-      // Optimize path: reduce decimal precision
-      const optimizedPath = optimizePath(filteredPath, options.precision ?? 0);
+    // Filter out background rectangle paths (paths that span the entire canvas)
+    const filteredPath = filterBackgroundPaths(pathMatch[1], w, h);
 
-      resolve({
-        path: optimizedPath,
-        width: w,
-        height: h
-      });
+    if (!filteredPath || filteredPath.trim() === '') {
+      return callback(new Error(`No valid path data after filtering in ${imagePath}`));
+    }
+
+    // Optimize path: reduce decimal precision
+    const optimizedPath = optimizePath(filteredPath, options.precision ?? 0);
+
+    callback(null, {
+      path: optimizedPath,
+      width: w,
+      height: h
     });
   });
 }

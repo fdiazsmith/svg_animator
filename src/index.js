@@ -10,6 +10,7 @@ import { generatePlayer } from './player-generator.js';
 import { generateSMIL } from './smil-generator.js';
 
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp'];
 
 /**
  * Check if input is a video file
@@ -17,6 +18,14 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
 function isVideoFile(input) {
   const ext = path.extname(input).toLowerCase();
   return VIDEO_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Check if file is an image
+ */
+function isImageFile(input) {
+  const ext = path.extname(input).toLowerCase();
+  return IMAGE_EXTENSIONS.includes(ext);
 }
 
 /**
@@ -65,8 +74,21 @@ export async function animate(options) {
     inputFiles = result.frames;
     tempDir = result.tempDir;
   } else {
-    inputFiles = await glob(options.input);
-    inputFiles.sort();
+    // Check if input is a directory
+    let globPattern = options.input;
+    try {
+      const stats = fs.statSync(options.input);
+      if (stats.isDirectory()) {
+        globPattern = path.join(options.input, '*');
+      }
+    } catch (e) {
+      // Not a file/directory, treat as glob pattern
+    }
+
+    inputFiles = await glob(globPattern);
+
+    // Filter to only image files
+    inputFiles = inputFiles.filter(f => isImageFile(f)).sort();
   }
 
   // Apply frame skip if specified
